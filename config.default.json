@@ -1,0 +1,10 @@
+{
+    "PLEX_URL": "",
+    "PLEX_TOKEN": "",
+    "TRAKT_CLIENT_ID": "",
+    "TRAKT_CLIENT_SECRET": "",
+    "TMDB_API_KEY": "",
+    "PLEX_LIBRARIES": [],
+    "SYNC_DIRECTION": "plex_to_trakt",
+    "DRY_RUN": false
+}

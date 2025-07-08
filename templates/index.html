@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plex-Trakt Sync Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #191919; color: #e0e0e0; }
+        .panel { background-color: rgba(40, 40, 40, 0.6); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .plex-accent { color: #e5a00d; } .plex-accent-bg { background-color: #e5a00d; }
+        .plex-accent-bg-hover:hover { background-color: #f0ad4e; }
+        .status-dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; }
+        .status-ok { background-color: #22c55e; } .status-running { background-color: #e5a00d; }
+        .status-error { background-color: #ef4444; } .status-idle { background-color: #6b7280; }
+        .modal-backdrop { background-color: rgba(0,0,0,0.8); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); z-index: 50; }
+        .tab-btn { transition: all 0.3s ease; border-bottom: 3px solid transparent; cursor: pointer; padding: 0.5rem 0; margin-bottom: -1px; }
+        .tab-btn.active { color: #e5a00d; border-bottom-color: #e5a00d; }
+        .tab-content { display: none; } .tab-content.active { display: block; }
+        .data-log { font-family: 'Fira Code', monospace; background-color: rgba(0,0,0,0.3); color: #e0e0e0; white-space: pre; }
+        .live-log-line-SUCCESS { color: #22c55e; } .live-log-line-ERROR, .live-log-line-FATAL { color: #ef4444; }
+        .live-log-line-WARN { color: #e5a00d; } .live-log-line-INFO, .live-log-line-SYNC { color: #60a5fa; }
+        .history-item { display: flex; align-items: center; background-color: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: 0.5rem; margin-bottom: 0.75rem; }
+        .history-poster { width: 50px; height: 75px; object-fit: cover; border-radius: 0.25rem; margin-right: 1rem; flex-shrink: 0; background-color: #2a2a2a; }
+        .history-details { display: flex; flex-direction: column; }
+    </style>
+</head>
+<body class="text-gray-300">
+    <div class="min-h-screen flex flex-col items-center p-4 sm:p-6 lg:p-8">
+        <div class="w-full max-w-6xl mx-auto">
+            <header class="flex justify-between items-center mb-10">
+                <div class="text-left"><h1 class="text-4xl font-bold text-white">Plex-Trakt <span class="plex-accent">Sync</span></h1><p class="text-gray-400 mt-2">Your personal dashboard for keeping Plex and Trakt.tv in harmony.</p></div>
+                <button id="settings-btn" class="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300 flex items-center"><svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>Settings</button>
+            </header>
+            <main class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div class="lg:col-span-1 space-y-8">
+                    <div class="panel rounded-xl shadow-lg p-6"><h2 class="text-xl font-semibold text-white mb-4">Manual Control</h2><button id="manual-sync-btn" class="w-full plex-accent-bg plex-accent-bg-hover text-black font-bold py-3 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center"><svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M20 20v-5h-5M4 20h5v-5M20 4h-5v5"></path></svg>Run Sync Now</button></div>
+                    <div class="panel rounded-xl shadow-lg p-6"><h2 class="text-xl font-semibold text-white mb-4">Live Status</h2><div class="space-y-4"><div class="flex justify-between items-center"><span class="text-gray-400">Status:</span><div class="flex items-center"><span id="status-dot" class="status-idle mr-2"></span><span id="status-text" class="font-medium text-white">Idle</span></div></div><div class="flex justify-between items-center"><span class="text-gray-400">Plex Auth:</span><div id="plex-auth-status" class="flex items-center"><span class="status-dot status-error mr-2"></span><span class="font-medium text-white">Unauthorized</span></div></div><div class="flex justify-between items-center"><span class="text-gray-400">Trakt Auth:</span><div id="trakt-auth-status" class="flex items-center"><span class="status-dot status-error mr-2"></span><span class="font-medium text-white">Unauthorized</span></div></div></div></div>
+                </div>
+                <div class="lg:col-span-2 panel rounded-xl shadow-lg p-6">
+                    <div class="border-b border-gray-700"><nav id="tabs-nav" class="-mb-px flex space-x-6" aria-label="Tabs"><button class="tab-btn active" data-tab="live-progress">Live Progress</button><button class="tab-btn" data-tab="sync-history">Sync History</button><button class="tab-btn" data-tab="trakt-history">Trakt History</button></nav></div>
+                    <div class="mt-6">
+                        <div id="live-progress" class="tab-content active">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-center mb-6">
+                                <div><p class="text-gray-400 text-sm">Status</p><p id="stat-status" class="text-lg font-semibold capitalize">-</p></div>
+                                <div><p class="text-gray-400 text-sm">Current Library</p><p id="stat-current-library" class="text-lg font-semibold">-</p></div>
+                            </div>
+                            <div id="raw-log-container" class="data-log overflow-auto space-y-1 pr-2 p-4 rounded-lg" style="height: 350px;"><div class="text-center text-gray-500 pt-16"><p>Raw log output will appear here during a sync.</p></div></div>
+                        </div>
+                        <div id="sync-history" class="tab-content h-[450px] overflow-y-auto pr-2" data-loaded="false"></div>
+                        <div id="trakt-history" class="tab-content h-[450px] overflow-y-auto pr-2" data-loaded="false">
+                            <div id="trakt-history-list-container"></div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+    <div id="settings-modal" class="fixed inset-0 modal-backdrop flex items-center justify-center hidden">
+        <div class="panel rounded-xl shadow-2xl w-full max-w-2xl p-8 m-4 relative">
+            <button id="close-settings-btn" class="absolute top-4 right-4 text-gray-500 hover:text-white transition-colors"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+            <h2 class="text-2xl font-bold text-white mb-6">Configuration Settings</h2>
+            <div id="main-settings-content">
+                <form id="settings-form" class="space-y-6">
+                    <fieldset><legend class="text-lg font-medium text-white mb-2">API Credentials</legend>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div><label for="plex-url" class="block text-sm font-medium text-gray-300 mb-1">Plex Server URL</label><input type="text" id="plex-url" name="PLEX_URL" class="bg-gray-900 text-white w-full rounded-lg border-gray-700" required></div>
+                            <div><label for="plex-token" class="block text-sm font-medium text-gray-300 mb-1">Plex Token</label><input type="password" id="plex-token" name="PLEX_TOKEN" class="bg-gray-900 text-white w-full rounded-lg border-gray-700" placeholder="Authorize to fill" readonly></div>
+                            <div><label for="trakt-client-id" class="block text-sm font-medium text-gray-300 mb-1">Trakt Client ID</label><input type="text" id="trakt-client-id" name="TRAKT_CLIENT_ID" class="bg-gray-900 text-white w-full rounded-lg border-gray-700" required></div>
+                            <div><label for="trakt-client-secret" class="block text-sm font-medium text-gray-300 mb-1">Trakt Client Secret</label><input type="password" id="trakt-client-secret" name="TRAKT_CLIENT_SECRET" class="bg-gray-900 text-white w-full rounded-lg border-gray-700" required></div>
+                            <div class="md:col-span-2"><label for="tmdb-api-key" class="block text-sm font-medium text-gray-300 mb-1">TMDB API Key (for posters)</label><input type="password" id="tmdb-api-key" name="TMDB_API_KEY" class="bg-gray-900 text-white w-full rounded-lg border-gray-700"></div>
+                        </div>
+                    </fieldset>
+                    <fieldset><legend class="text-lg font-medium text-white mb-2">Plex Libraries</legend><div id="plex-library-list" class="max-h-40 overflow-y-auto space-y-2 p-3 bg-gray-900 rounded-lg border border-gray-700"><p class="text-gray-500">Authorize Plex and save to load libraries.</p></div></fieldset>
+                    <div class="pt-4 flex justify-between items-center">
+                        <div><button type="button" id="authorize-plex-btn" class="bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-lg transition">Authorize Plex</button><button type="button" id="authorize-trakt-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition ml-2">Authorize Trakt</button></div>
+                        <div><button type="submit" class="plex-accent-bg plex-accent-bg-hover text-black font-bold py-2 px-4 rounded-lg transition">Save Settings</button></div>
+                    </div>
+                </form>
+            </div>
+            <div id="auth-flow-content" class="hidden text-center"></div>
+        </div>
+    </div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const dom = {
+        manualSyncBtn: document.getElementById('manual-sync-btn'), statusText: document.getElementById('status-text'), statusDot: document.getElementById('status-dot'),
+        plexAuthStatus: document.getElementById('plex-auth-status'), traktAuthStatus: document.getElementById('trakt-auth-status'), settingsBtn: document.getElementById('settings-btn'),
+        settingsModal: document.getElementById('settings-modal'), closeSettingsBtn: document.getElementById('close-settings-btn'), settingsForm: document.getElementById('settings-form'),
+        mainSettingsContent: document.getElementById('main-settings-content'), authFlowContent: document.getElementById('auth-flow-content'), plexLibraryList: document.getElementById('plex-library-list'),
+        authorizePlexBtn: document.getElementById('authorize-plex-btn'), authorizeTraktBtn: document.getElementById('authorize-trakt-btn'),
+        plexTokenInput: document.getElementById('plex-token'), plexUrlInput: document.getElementById('plex-url'), traktClientIdInput: document.getElementById('trakt-client-id'),
+        traktClientSecretInput: document.getElementById('trakt-client-secret'), tmdbApiKeyInput: document.getElementById('tmdb-api-key'), tabsNav: document.getElementById('tabs-nav'),
+        tabContents: document.querySelectorAll('.tab-content'), rawLogContainer: document.getElementById('raw-log-container'), statStatus: document.getElementById('stat-status'),
+        statCurrentLibrary: document.getElementById('stat-current-library'), syncHistoryContainer: document.getElementById('sync-history'),
+        traktHistoryListContainer: document.getElementById('trakt-history-list-container'),
+    };
+    let syncPollInterval = null;
+    const originalSyncBtnContent = dom.manualSyncBtn.innerHTML;
+
+    const api = {
+        getStatus: () => fetch('/api/status').then(res => res.json()),
+        getConfig: () => fetch('/api/config').then(res => res.json()),
+        saveConfig: (data) => fetch('/api/config', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) }),
+        runSync: () => fetch('/api/run-sync', { method: 'POST' }).then(res => res.json()),
+        getLiveLog: () => fetch('/api/live-log').then(res => res.json()),
+        getPlexLibraries: () => fetch('/api/plex/libraries').then(res => res.json()),
+        getPlexPin: () => fetch('/api/plex-auth/get-pin', { method: 'POST' }).then(res => res.json()),
+        checkPlexPin: (pinId) => fetch('/api/plex-auth/check-pin', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: pinId}) }).then(res => res.json()),
+        initiateTraktAuth: () => fetch('/api/trakt-auth/initiate-auth', { method: 'POST' }).then(res => res.json()),
+        checkTraktAuth: (deviceCode) => fetch('/api/trakt-auth/check-auth', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({device_code: deviceCode}) }).then(res => res.json()),
+        getSyncProgress: () => fetch('/api/sync-progress').then(res => res.json()),
+        getSyncHistory: () => fetch('/api/sync-history').then(res => res.json()),
+        getTraktHistory: () => fetch('/api/trakt-history'),
+    };
+
+    const updateAuthStatus = (el, isAuthorized) => {
+        const dot = el.querySelector('.status-dot');
+        const text = el.querySelector('span:last-child');
+        dot.className = `status-dot ${isAuthorized ? 'status-ok' : 'status-error'} mr-2`;
+        text.textContent = isAuthorized ? 'Authorized' : 'Unauthorized';
+    };
+    const showAuthFlow = (content) => {
+        dom.mainSettingsContent.classList.add('hidden');
+        dom.authFlowContent.innerHTML = content;
+        dom.authFlowContent.classList.remove('hidden');
+    };
+    const hideAuthFlow = () => {
+        dom.mainSettingsContent.classList.remove('hidden');
+        dom.authFlowContent.innerHTML = '';
+        dom.authFlowContent.classList.add('hidden');
+    };
+    const fetchAndRenderLibraries = async (selectedLibraryIds = []) => {
+        dom.plexLibraryList.innerHTML = `<p class="text-gray-400">Fetching libraries...</p>`;
+        try {
+            const libs = await api.getPlexLibraries();
+            if (libs.error) throw new Error(libs.error);
+            dom.plexLibraryList.innerHTML = '';
+            if (libs.length === 0) {
+                 dom.plexLibraryList.innerHTML = `<p class="text-gray-500">No Movie or TV Show libraries found.</p>`;
+                 return;
+            }
+            const selectedIds = new Set(selectedLibraryIds.map(String));
+            libs.forEach(lib => {
+                const isChecked = selectedIds.has(String(lib.id));
+                const label = document.createElement('label');
+                label.className = 'flex items-center space-x-3 cursor-pointer';
+                label.innerHTML = `<input type="checkbox" name="PLEX_LIBRARIES" value="${lib.id}" class="form-checkbox h-5 w-5 rounded bg-gray-700 text-plex-accent focus:ring-plex-accent" ${isChecked ? 'checked' : ''}><span>${lib.title} (${lib.type})</span>`;
+                dom.plexLibraryList.appendChild(label);
+            });
+        } catch(e) {
+            dom.plexLibraryList.innerHTML = `<p class="text-red-400">Error fetching libraries: ${e.message}</p>`;
+        }
+    };
+    const populateForm = async () => {
+        try {
+            const config = await api.getConfig();
+            if (config.error) { throw new Error(config.error); }
+            dom.plexUrlInput.value = config.PLEX_URL || '';
+            dom.plexTokenInput.value = config.PLEX_TOKEN || '';
+            dom.traktClientIdInput.value = config.TRAKT_CLIENT_ID || '';
+            dom.traktClientSecretInput.value = config.TRAKT_CLIENT_SECRET || '';
+            dom.tmdbApiKeyInput.value = config.TMDB_API_KEY || '';
+            if(config.PLEX_TOKEN && config.PLEX_URL) {
+                fetchAndRenderLibraries(config.PLEX_LIBRARIES || []);
+            } else {
+                dom.plexLibraryList.innerHTML = `<p class="text-gray-500">Authorize Plex and save to load libraries.</p>`;
+            }
+        } catch(e) {
+             dom.plexLibraryList.innerHTML = `<p class="text-red-400">Failed to load config.</p>`;
+             console.error("Failed to populate form:", e);
+        }
+    };
+
+    const handlePlexAuth = () => {
+        let pinInterval;
+        api.getPlexPin().then(pinData => {
+            if (pinData.error) throw new Error(pinData.error);
+            window.open('https://plex.tv/link', '_blank');
+            showAuthFlow(`<p class="text-gray-300 mb-2">Go to plex.tv/link and enter the PIN:</p><div class="text-4xl font-bold tracking-widest bg-gray-900 p-4 rounded-lg">${pinData.code}</div><p class="text-gray-500 text-sm mt-4">Checking for authorization...</p>`);
+            pinInterval = setInterval(() => {
+                api.checkPlexPin(pinData.id).then(checkData => {
+                    if (checkData.status === 'success' && checkData.auth_token) {
+                        clearInterval(pinInterval);
+                        dom.plexTokenInput.value = checkData.auth_token;
+                        alert('Plex Authorized! You can now save settings to load your libraries.');
+                        hideAuthFlow();
+                        refreshStatus();
+                    } else if (checkData.status === 'error') {
+                        clearInterval(pinInterval);
+                        alert(`Authorization failed: ${checkData.message}`);
+                        hideAuthFlow();
+                    }
+                });
+            }, 5000);
+        }).catch(e => { alert(`Failed to get Plex PIN: ${e.message}`); hideAuthFlow(); });
+    };
+    const handleTraktAuth = async () => {
+        let pollInterval;
+        try {
+            const codeData = await api.initiateTraktAuth();
+            if (codeData.error) throw new Error(codeData.error);
+            showAuthFlow(`<p class="text-gray-300 mb-2">Go to <a href="${codeData.verification_url}" target="_blank" class="text-plex-accent underline">${codeData.verification_url}</a> and enter the code:</p><div class="text-4xl font-bold tracking-widest bg-gray-900 p-4 rounded-lg">${codeData.user_code}</div><p class="text-gray-500 text-sm mt-4">Checking for authorization...</p>`);
+            pollInterval = setInterval(async () => {
+                const result = await api.checkTraktAuth(codeData.device_code);
+                if(result && result.status === 'success') {
+                    clearInterval(pollInterval);
+                    alert('Trakt Authorized! Configuration has been saved automatically.');
+                    hideAuthFlow();
+                    refreshStatus();
+                } else if (result && result.status === 'error') {
+                    clearInterval(pollInterval);
+                    alert(`Authorization failed: ${result.message || result.error}`);
+                    hideAuthFlow();
+                }
+            }, (codeData.interval || 5) * 1000);
+        } catch(e) {
+            alert(`Trakt authorization process failed: ${e.message}`);
+            hideAuthFlow();
+        }
+    };
+    
+    const startSync = async () => {
+        if (dom.manualSyncBtn.disabled) return;
+        dom.manualSyncBtn.disabled = true;
+        dom.manualSyncBtn.innerHTML = `<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-black" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Syncing...`;
+        dom.rawLogContainer.innerHTML = '<p class="text-gray-400 p-4">Starting sync process...</p>';
+        
+        try {
+            await api.runSync();
+            syncPollInterval = setInterval(pollSyncProgress, 2000);
+        } catch (e) {
+            dom.rawLogContainer.innerHTML = `<p class="text-red-500 p-4">Failed to start sync: ${e.message}</p>`;
+            dom.manualSyncBtn.disabled = false;
+            dom.manualSyncBtn.innerHTML = originalSyncBtnContent;
+        }
+    };
+
+    const pollSyncProgress = async () => {
+        try {
+            const [status, progress, logLines] = await Promise.all([api.getStatus(), api.getSyncProgress(), api.getLiveLog()]);
+            
+            dom.statStatus.textContent = progress.status.replace('_', ' ');
+            dom.statCurrentLibrary.textContent = progress.current_library;
+
+            if (logLines && logLines.length > 0) {
+                dom.rawLogContainer.innerHTML = logLines.map(line => {
+                    const typeMatch = line.match(/\[(SUCCESS|ERROR|FATAL|WARN|INFO|SYNC)\]/);
+                    const type = typeMatch ? typeMatch[1] : 'INFO';
+                    const sanitizedLine = line.replace(/</g, "<").replace(/>/g, ">");
+                    return `<div class="live-log-line-${type}">${sanitizedLine}</div>`;
+                }).join('');
+                dom.rawLogContainer.scrollTop = dom.rawLogContainer.scrollHeight;
+            }
+            
+            if (!status.sync_in_progress) {
+                clearInterval(syncPollInterval);
+                dom.manualSyncBtn.disabled = false;
+                dom.manualSyncBtn.innerHTML = originalSyncBtnContent;
+                refreshStatus();
+                
+                document.querySelector('.tab-btn[data-tab="trakt-history"]').click();
+            }
+        } catch (e) {
+            console.error("Polling error:", e);
+            clearInterval(syncPollInterval);
+            dom.manualSyncBtn.disabled = false;
+            dom.manualSyncBtn.innerHTML = originalSyncBtnContent;
+        }
+    };
+
+    const refreshStatus = async () => {
+        try {
+            const status = await api.getStatus();
+            updateAuthStatus(dom.plexAuthStatus, status.plex_authorized);
+            updateAuthStatus(dom.traktAuthStatus, status.trakt_authorized);
+            dom.statusText.textContent = status.sync_in_progress ? 'Syncing...' : 'Idle';
+            dom.statusDot.className = `status-dot ${status.sync_in_progress ? 'status-running' : 'status-idle'} mr-2`;
+        } catch (error) {
+            console.error("Failed to refresh status:", error);
+        }
+    };
+
+    const renderSyncHistory = async () => {
+        const container = dom.syncHistoryContainer;
+        container.innerHTML = `<p class="text-gray-400 p-4 text-center">Loading sync history...</p>`;
+        try {
+            const history = await api.getSyncHistory();
+            if (history.error) throw new Error(history.error);
+            if (history.length === 0) {
+                container.innerHTML = `<p class="text-gray-500 p-4 text-center">No sync history found.</p>`;
+                return;
+            }
+            container.innerHTML = history.map(entry => {
+                const startDate = new Date(entry.start_time).toLocaleString();
+                const duration = `${Math.floor(entry.duration_seconds / 60)}m ${entry.duration_seconds % 60}s`;
+                const statusClass = entry.status === 'Completed' ? 'text-green-400' : 'text-red-400';
+                return `
+                    <div class="bg-gray-800/50 p-4 rounded-lg mb-3">
+                        <div class="flex justify-between items-center">
+                            <div>
+                                <p class="font-semibold text-white">${startDate}</p>
+                                <p class="text-sm text-gray-400">Duration: ${duration} • Items Added: ${entry.items_added}</p>
+                            </div>
+                            <p class="font-bold ${statusClass}">${entry.status}</p>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } catch (e) {
+            container.innerHTML = `<p class="text-red-400 p-4 text-center">Error loading sync history: ${e.message}</p>`;
+        }
+    };
+
+    const renderTraktHistory = async () => {
+        const container = dom.traktHistoryListContainer;
+        container.innerHTML = `<p class="text-gray-400 p-4 text-center">Loading Trakt watched history...</p>`;
+        try {
+            const response = await api.getTraktHistory();
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || `HTTP error! status: ${response.status}`);
+            }
+            
+            if (!data.items || data.items.length === 0) {
+                container.innerHTML = `<p class="text-gray-500 p-4 text-center">No watched history found. Please build the cache from the settings menu.</p>`;
+                return;
+            }
+
+            let html = '';
+            data.items.forEach(item => {
+                let title = '';
+                let subtitle = '';
+                const watchedDate = new Date(item.watched_at).toLocaleString();
+
+                if (item.type === 'movie') {
+                    title = item.title;
+                    subtitle = item.year;
+                } else if (item.type === 'episode') {
+                    title = item.show_title;
+                    const season = String(item.season_number).padStart(2, '0');
+                    const episode = String(item.episode_number).padStart(2, '0');
+                    subtitle = `S${season}E${episode}: ${item.episode_title || ''}`;
+                }
+
+                html += `
+                    <div class="history-item">
+                        <img src="${item.poster}" class="history-poster">
+                        <div class="history-details">
+                            <p class="font-semibold text-white">${title}</p>
+                            <p class="text-sm text-gray-400">${subtitle}</p>
+                            <p class="text-xs text-gray-500 mt-1">Watched: ${watchedDate}</p>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+
+        } catch (e) {
+            container.innerHTML = `<p class="text-red-400 p-4 text-center">Error loading Trakt history: ${e.message}</p>`;
+        }
+    };
+
+    dom.settingsBtn.addEventListener('click', () => { populateForm(); dom.settingsModal.classList.remove('hidden'); });
+    dom.closeSettingsBtn.addEventListener('click', () => { hideAuthFlow(); dom.settingsModal.classList.add('hidden'); });
+    dom.manualSyncBtn.addEventListener('click', startSync);
+    dom.authorizePlexBtn.addEventListener('click', handlePlexAuth);
+    dom.authorizeTraktBtn.addEventListener('click', handleTraktAuth);
+    dom.settingsForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const selectedLibs = Array.from(document.querySelectorAll('input[name="PLEX_LIBRARIES"]:checked')).map(cb => cb.value);
+        const data = {
+            PLEX_URL: dom.plexUrlInput.value, PLEX_TOKEN: dom.plexTokenInput.value,
+            TRAKT_CLIENT_ID: dom.traktClientIdInput.value, TRAKT_CLIENT_SECRET: dom.traktClientSecretInput.value,
+            TMDB_API_KEY: dom.tmdbApiKeyInput.value, PLEX_LIBRARIES: selectedLibs
+        };
+        await api.saveConfig(data);
+        alert('Settings saved!');
+        dom.settingsModal.classList.add('hidden');
+        refreshStatus();
+    });
+
+    dom.tabsNav.addEventListener('click', (e) => {
+        if (e.target.classList.contains('tab-btn')) {
+            const tabId = e.target.dataset.tab;
+            const tabContent = document.getElementById(tabId);
+            
+            dom.tabsNav.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            e.target.classList.add('active');
+            dom.tabContents.forEach(content => {
+                content.id === tabId ? content.classList.add('active') : content.classList.remove('active');
+            });
+
+            if (tabContent.dataset.loaded === 'false' || tabId === 'trakt-history') {
+                if (tabId === 'sync-history') renderSyncHistory();
+                if (tabId === 'trakt-history') renderTraktHistory();
+                tabContent.dataset.loaded = 'true';
+            }
+        }
+    });
+    
+    refreshStatus();
+    renderTraktHistory();
+    setInterval(refreshStatus, 10000);
+});
+</script>
+</body>
+</html>
