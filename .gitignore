@@ -137,7 +137,6 @@ cython_debug/
 ################################################################
 # User-specific configuration and data files
 # These should NEVER be committed to the repository.
-config.json
 sync_history.json
 trakt_history_cache.json
 history.json
