@@ -8,9 +8,9 @@ Where others settled for rudimentary terminal scripts, Plex-Trakt Sync v2.0 intr
 
 ---
 
-<<<<<<< HEAD
+
 ![Plex-Trakt Sync Dashboard](Assets-demo.gif)
-=======
+
 ![Plex-Trakt Sync Dashboard](assets/Assets-demo.gif)
 >>>>>>> e90ccbbf783af889aacf9e4e6f363423e5cc45b6
 
