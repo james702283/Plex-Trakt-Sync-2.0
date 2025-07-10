@@ -1,41 +1,47 @@
+import sys
+import os
+import subprocess
 import json
 import traceback
 import uuid
-from threading import Thread
+from threading import Thread, Event
 from flask import Flask, request, jsonify, render_template
 from waitress import serve
-import webbrowser
 import time
 import re
 from datetime import datetime, UTC, timedelta
-import os
-import sys
+import atexit
+import webbrowser
+
+# --- SELF-AWARE LAUNCHER STUB ---
+VENV_PYTHON = os.path.abspath(os.path.join(os.path.dirname(__file__), 'venv', 'Scripts', 'python.exe'))
+CURRENT_PYTHON = os.path.abspath(sys.executable)
+if CURRENT_PYTHON.lower() != VENV_PYTHON.lower():
+    print(f"--- LAUNCHER: Re-launching with the correct one from the virtual environment... ---")
+    subprocess.call([VENV_PYTHON, __file__] + sys.argv[1:])
+    sys.exit(0)
+# --- END OF LAUNCHER STUB ---
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-
 import state
-
 from config.ConfigLoader import load_config, save_config
 from plex_api.PlexApi import PlexApi
 from trakt_api.TraktApi import TraktApi
 from metadata.tmdb_api import TMDbApi
 
+## FIX: TqdmToLog is now a simple passthrough. It no longer updates any state.
 class TqdmToLog:
     def write(self, s):
         sys.stderr.write(s)
         sys.stderr.flush()
         s = s.strip()
-        if s:
-            with state.log_lock:
-                if state.LIVE_LOG_LINES and state.LIVE_LOG_LINES[-1].startswith("Scanning"):
-                    state.LIVE_LOG_LINES[-1] = s
-                else:
-                    state.LIVE_LOG_LINES.append(s)
-            with state.progress_lock:
-                library_match = re.search(r"Scanning '([^']*)'", s)
-                if library_match:
-                    state.SYNC_PROGRESS_STATS.update({"status": "scanning", "current_library": library_match.group(1)})
+        if not s: return
+        with state.log_lock:
+            if state.LIVE_LOG_LINES and state.LIVE_LOG_LINES[-1].lstrip().startswith(('Scanning', 'Comparing', 'Applying')):
+                state.LIVE_LOG_LINES[-1] = s
+            else:
+                state.LIVE_LOG_LINES.append(s)
     def flush(self):
         sys.stderr.flush()
 
@@ -44,8 +50,14 @@ SCHEDULER = BackgroundScheduler()
 
 def reset_progress_stats():
     with state.progress_lock:
-        state.SYNC_PROGRESS_STATS = {"status": "idle", "current_library": "N/A"}
-        # --- FIX: Reset the correct counter ---
+        state.SYNC_PROGRESS_STATS.update({
+            "status": "idle", "current_library": "N/A", "is_syncing": False,
+            "current_item_name": "",
+            "item": {"name": "", "progress_percent": 0, "progress_text": ""},
+            "overall": {"progress_percent": 0, "progress_text": "", "library_progress_text": ""},
+            "rate": {"value_raw": 0, "text": "0 items/s"},
+            "time": {"elapsed": "00:00", "remaining": "00:00"}
+        })
         state.ITEMS_PROCESSED_COUNT = 0
 
 def log(message):
@@ -54,18 +66,56 @@ def log(message):
         sanitized_message = message.replace('<', '<').replace('>', '>')
         state.LIVE_LOG_LINES.append(sanitized_message)
 
+def progress_updater(total_items, stop_event, start_time):
+    last_count = 0
+    last_time = start_time
+    
+    while not stop_event.is_set():
+        with state.progress_lock:
+            current_count = state.ITEMS_PROCESSED_COUNT
+            if total_items > 0:
+                overall_percent = (current_count / total_items) * 100
+                state.SYNC_PROGRESS_STATS["overall"]["progress_percent"] = overall_percent
+                state.SYNC_PROGRESS_STATS["overall"]["progress_text"] = f"{current_count}/{total_items}"
+
+            now = datetime.now(UTC)
+            elapsed_seconds = (now - start_time).total_seconds()
+            state.SYNC_PROGRESS_STATS["time"]["elapsed"] = str(timedelta(seconds=int(elapsed_seconds)))
+
+            time_delta = (now - last_time).total_seconds()
+            if time_delta > 1: # Update rate every second
+                count_delta = current_count - last_count
+                rate = count_delta / time_delta
+                state.SYNC_PROGRESS_STATS["rate"]["value_raw"] = rate
+                state.SYNC_PROGRESS_STATS["rate"]["text"] = f"{rate:.2f} items/s"
+                
+                if rate > 0:
+                    remaining_items = total_items - current_count
+                    remaining_seconds = remaining_items / rate
+                    state.SYNC_PROGRESS_STATS["time"]["remaining"] = str(timedelta(seconds=int(remaining_seconds)))
+                
+                last_count = current_count
+                last_time = now
+
+        time.sleep(0.5) # Update UI twice a second for smoothness
+
 def sync_worker():
     from run_sync import run_plugins 
-
     if not state.sync_lock.acquire(blocking=False):
         log("[WARN] Sync requested, but a sync is already in progress.")
         return
     
     state.SYNC_CANCEL_REQUESTED = False 
-    
+    stop_updater_event = Event()
+    updater_thread = None
+
     try:
         with state.log_lock: state.LIVE_LOG_LINES.clear()
         reset_progress_stats()
+        with state.progress_lock:
+            state.SYNC_PROGRESS_STATS["is_syncing"] = True
+            state.SYNC_PROGRESS_STATS["status"] = "scanning"
+            state.SYNC_PROGRESS_STATS["current_library"] = "Initializing..."
         start_time = datetime.now(UTC)
         log("[INFO] --- SYNC PROCESS STARTED ---")
         status = "Failed"
@@ -74,17 +124,29 @@ def sync_worker():
             config = load_config()
             plex_api = PlexApi(baseurl=config.get("PLEX_URL"), token=config.get("PLEX_TOKEN"), log=log)
             trakt_api = TraktApi(client_id=config.get("TRAKT_CLIENT_ID"), client_secret=config.get("TRAKT_CLIENT_SECRET"), log=log, oauth_token_data=config.get("TRAKT_OAUTH_TOKEN"))
+            
+            library_ids = config.get("PLEX_LIBRARIES", [])
+            log("[INFO] Calculating total number of items to sync...")
+            total_items = plex_api.get_total_item_count(library_ids)
+            log(f"[INFO] Found a total of {total_items} items to scan across all libraries.")
+
+            updater_thread = Thread(target=progress_updater, args=(total_items, stop_updater_event, start_time), daemon=True)
+            updater_thread.start()
+
             run_plugins(plex_api, trakt_api, config, log, TqdmToLog)
             status = "Completed"
         except Exception as e:
             log(f"[FATAL] An error occurred in the sync worker: {e}"); log(traceback.format_exc())
         finally:
+            if updater_thread:
+                stop_updater_event.set()
+                updater_thread.join(timeout=2)
+
             log_message = "[CANCEL] --- SYNC PROCESS CANCELLED BY USER ---" if state.SYNC_CANCEL_REQUESTED else "[INFO] --- SYNC PROCESS FINISHED ---"
             log(log_message)
             if state.SYNC_CANCEL_REQUESTED: status = "Cancelled"
             
             end_time = datetime.now(UTC)
-            # --- FIX: Save the correct "Items Scanned" counter ---
             with state.progress_lock: items_scanned_count = state.ITEMS_PROCESSED_COUNT
             history_entry = {"id": str(uuid.uuid4()), "start_time": start_time.isoformat(), "end_time": end_time.isoformat(), "duration_seconds": int((end_time - start_time).total_seconds()), "status": status, "items_added": items_scanned_count}
             
@@ -95,10 +157,11 @@ def sync_worker():
             except (FileNotFoundError, json.JSONDecodeError):
                 with open(SYNC_HISTORY_FILE, 'w') as f: json.dump([entry for entry in [history_entry] if entry], f, indent=4)
             
-            with state.progress_lock: state.SYNC_PROGRESS_STATS["status"] = "finished"
+            reset_progress_stats()
     finally:
         state.sync_lock.release()
 
+# ... (rest of file is unchanged)
 def update_schedule(config):
     job_id = 'scheduled_sync'
     job = SCHEDULER.get_job(job_id)
@@ -157,45 +220,22 @@ def plex_on_deck_route():
     cfg = load_config()
     try:
         plex_api = PlexApi(cfg.get("PLEX_URL"), cfg.get("PLEX_TOKEN"), log)
-        if not plex_api.is_configured:
-            return jsonify({"error": "Plex is not authorized."}), 401
-            
+        if not plex_api.is_configured: return jsonify({"error": "Plex is not authorized."}), 401
         tmdb_api = TMDbApi(cfg.get("TMDB_API_KEY"), log)
         on_deck_items = plex_api.server.library.onDeck()
-        
         ui_items = []
         for item in on_deck_items:
             progress = (item.viewOffset / item.duration) * 100 if item.duration else 0
-            
             if item.type == 'movie':
                 imdb_id = next((g.id.split('//')[1] for g in item.guids if 'imdb' in g.id), None)
                 tmdb_id = next((g.id.split('//')[1] for g in item.guids if 'tmdb' in g.id), None)
-                ui_items.append({
-                    "type": "movie",
-                    "title": item.title,
-                    "subtitle": str(item.year),
-                    "poster": tmdb_api.get_poster(media_type='movie', imdb_id=imdb_id, tmdb_id=tmdb_id),
-                    "progress": round(progress),
-                    "last_watched": item.lastViewedAt.isoformat() if item.lastViewedAt else "N/A"
-                })
+                ui_items.append({"type": "movie","title": item.title,"subtitle": str(item.year),"poster": tmdb_api.get_poster(media_type='movie', imdb_id=imdb_id, tmdb_id=tmdb_id),"progress": round(progress),"last_watched": item.lastViewedAt.isoformat() if item.lastViewedAt else "N/A"})
             elif item.type == 'episode':
                 plex_show = item.show()
                 imdb_id = next((g.id.split('//')[1] for g in plex_show.guids if 'imdb' in g.id), None)
                 tmdb_id = next((g.id.split('//')[1] for g in plex_show.guids if 'tmdb' in g.id), None)
-
-                if item.seasonNumber is not None and item.index is not None:
-                    subtitle = f"S{item.seasonNumber:02d}E{item.index:02d}: {item.title}"
-                else:
-                    subtitle = "Episode data missing"
-
-                ui_items.append({
-                    "type": "episode",
-                    "title": item.grandparentTitle,
-                    "subtitle": subtitle,
-                    "poster": tmdb_api.get_poster(media_type='tv', imdb_id=imdb_id, tmdb_id=tmdb_id),
-                    "progress": round(progress),
-                    "last_watched": item.lastViewedAt.isoformat() if item.lastViewedAt else "N/A"
-                })
+                subtitle = f"S{item.seasonNumber:02d}E{item.index:02d}: {item.title}" if item.seasonNumber is not None and item.index is not None else "Episode data missing"
+                ui_items.append({"type": "episode","title": item.grandparentTitle,"subtitle": subtitle,"poster": tmdb_api.get_poster(media_type='tv', imdb_id=imdb_id, tmdb_id=tmdb_id),"progress": round(progress),"last_watched": item.lastViewedAt.isoformat() if item.lastViewedAt else "N/A"})
         return jsonify({"items": ui_items})
     except Exception as e:
         log(f"[ERROR] Failed to fetch Plex On Deck: {traceback.format_exc()}")
@@ -241,18 +281,22 @@ def get_plex_libraries():
     
 @app.route("/api/plex-auth/get-pin", methods=["POST"])
 def get_plex_pin():
-    CLIENT_IDENTIFIER = str(uuid.uuid4())
     try:
-        plex_api = PlexApi(None, None, log); return jsonify(plex_api.get_pin(CLIENT_IDENTIFIER))
+        plex_api = PlexApi(None, None, log)
+        pin_data = plex_api.get_pin(str(uuid.uuid4()))
+        return jsonify(pin_data)
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @app.route("/api/plex-auth/check-pin", methods=["POST"])
 def check_plex_pin():
-    CLIENT_IDENTIFIER = str(uuid.uuid4())
+    data = request.get_json(force=True)
+    pin_id = data.get("id")
+    client_identifier = data.get("client_id")
+    if not client_identifier:
+        return jsonify({"error": "Client identifier is missing."}), 400
     try:
-        data = request.get_json(force=True); pin_id = data.get("id")
         plex_api = PlexApi(None, None, log)
-        auth_result = plex_api.check_pin(pin_id, CLIENT_IDENTIFIER)
+        auth_result = plex_api.check_pin(pin_id, client_identifier)
         if auth_result.get("auth_token"):
             cfg = load_config(); cfg["PLEX_TOKEN"] = auth_result["auth_token"]; save_config(cfg)
             return jsonify({"status": "success", "auth_token": auth_result["auth_token"]})
@@ -281,21 +325,15 @@ def check_trakt_auth():
     except Exception as e: return jsonify({"error": f"An error occurred: {e}"}), 500
 
 if __name__ == "__main__":
-    host = "0.0.0.0"; port = 8080; public_url = f"http://localhost:{port}"
+    host = "0.0.0.0"; port = 8080
+    public_url = f"http://localhost:{port}"
     print(f"--- Plex Trakt Sync Web Interface ---")
-    SYNC_HISTORY_FILE = "sync_history.json"
-    if not os.path.exists(SYNC_HISTORY_FILE):
-        with open(SYNC_HISTORY_FILE, 'w') as f: json.dump([], f)
+    print(f"Access the dashboard at: {public_url}")
     
     initial_config = load_config()
     if not SCHEDULER.running:
-        SCHEDULER.start(paused=True)
+        SCHEDULER.start()
         update_schedule(initial_config)
-        SCHEDULER.resume()
         print("Scheduler started.")
-    
-    if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
-        print(f"Access the dashboard at: {public_url}")
-        webbrowser.open(public_url)
         
     serve(app, host=host, port=port)

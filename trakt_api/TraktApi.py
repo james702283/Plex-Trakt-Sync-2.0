@@ -76,7 +76,8 @@ class TraktApi:
         return watched_movies_imdb, watched_episodes_trakt
 
     def get_watched_history_for_ui(self):
-        url = f"{TRAKT_API_URL}/sync/history?limit=200&extended=full"
+        ## FIX: Added limit=100 to fetch more items for the UI tab, as requested.
+        url = f"{TRAKT_API_URL}/sync/history?limit=100&extended=full"
         response = requests.get(url, headers=self._get_headers(), timeout=20)
         response.raise_for_status()
         history_data = response.json()

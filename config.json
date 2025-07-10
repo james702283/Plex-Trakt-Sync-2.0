@@ -1,5 +1,4 @@
 {
-    // NOTE: Fill in these values via the web UI or manually with your own credentials.
     "PLEX_URL": "YOUR_PLEX_URL_HERE",
     "PLEX_TOKEN": "YOUR_PLEX_TOKEN_HERE",
     "TRAKT_CLIENT_ID": "YOUR_TRAKT_CLIENT_ID_HERE",
