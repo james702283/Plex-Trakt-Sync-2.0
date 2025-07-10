@@ -8,7 +8,7 @@ Where others settled for rudimentary terminal scripts, Plex-Trakt Sync v2.0 intr
 
 ---
 
-![Plex-Trakt Sync Dashboard](assets/asset1.jpg)
+![Plex-Trakt Sync Dashboard](assets/Assets-demo.mp4)
 
 ---
 
