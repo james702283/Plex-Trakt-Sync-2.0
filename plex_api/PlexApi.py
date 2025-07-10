@@ -1,8 +1,7 @@
-# plex_api/PlexApi.py
 import uuid
 import requests
 from plexapi.server import PlexServer
-from plexapi.exceptions import Unauthorized
+from plexapi.exceptions import Unauthorized, NotFound
 
 class PlexApi:
     def __init__(self, baseurl, token, log):
@@ -13,16 +12,18 @@ class PlexApi:
 
     @property
     def server(self):
-        if self._server is None:
-            if not self._baseurl or not self._token:
-                raise ValueError("Plex URL and Token must be configured to access the server.")
+        if self.is_configured and self._server is None:
             try:
-                self._server = PlexServer(self._baseurl, self._token)
+                self._server = PlexServer(self._baseurl, self._token, timeout=30)
             except Unauthorized:
                 raise Exception("Plex token is invalid or has expired.")
             except Exception as e:
                 raise Exception(f"Failed to connect to Plex server: {e}")
         return self._server
+        
+    @property
+    def is_configured(self):
+        return bool(self._baseurl and self._token)
 
     def get_pin(self, client_identifier):
         headers = {
@@ -57,3 +58,30 @@ class PlexApi:
 
     def get_library_items(self, section_key):
         return self.server.library.sectionByID(section_key).all()
+
+    def get_item_by_rating_key(self, rating_key):
+        try:
+            return self.server.fetchItem(rating_key)
+        except NotFound:
+            return None
+
+    def get_collection(self, title, library):
+        try:
+            return library.collection(title)
+        except NotFound:
+            return None
+
+    def create_collection(self, title, library, items_to_add):
+        if items_to_add:
+            return library.createCollection(title=title, items=items_to_add)
+        self.log(f"[WARN] No items provided to create collection '{title}'.")
+        return None
+
+    def get_all_items_from_libraries(self, library_keys):
+        all_items = []
+        for key in library_keys:
+            try:
+                all_items.extend(self.server.library.sectionByID(int(key)).all())
+            except Exception as e:
+                self.log(f"[WARN] Could not fetch items from library {key}: {e}")
+        return all_items

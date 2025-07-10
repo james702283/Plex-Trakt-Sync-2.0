@@ -1,10 +1,26 @@
 {
-    "PLEX_URL": "<your-plex-server-url>",
-    "PLEX_TOKEN": "<your-plex-token>",
-    "TRAKT_CLIENT_ID": "<your-trakt-client-id>",
-    "TRAKT_CLIENT_SECRET": "<your-trakt-client-secret>",
-    "TMDB_API_KEY": "<your-tmdb-api-key>",
-    "PLEX_LIBRARIES": ["<library-names>", "..."],
-    "SYNC_DIRECTION": "plex_to_trakt", // or "trakt_to_plex"
-    "DRY_RUN": false // set to true to test without making changes
-} 
+    // NOTE: Fill in these values via the web UI or manually with your own credentials.
+    "PLEX_URL": "YOUR_PLEX_URL_HERE",
+    "PLEX_TOKEN": "YOUR_PLEX_TOKEN_HERE",
+    "TRAKT_CLIENT_ID": "YOUR_TRAKT_CLIENT_ID_HERE",
+    "TRAKT_CLIENT_SECRET": "YOUR_TRAKT_CLIENT_SECRET_HERE",
+    "TMDB_API_KEY": "YOUR_TMDB_API_KEY_HERE",
+    "PLEX_LIBRARIES": [
+        "YOUR_PLEX_LIBRARY_IDS_HERE"
+    ],
+    "SYNC_DIRECTION": "plex_to_trakt",
+    "SYNC_INTERVAL_HOURS": 6,
+    "SYNC_WATCH_HISTORY": true,
+    "SYNC_RATINGS": false,
+    "SYNC_WATCHLIST": false,
+    "SYNC_WATCH_PROGRESS": true,
+    "DRY_RUN": false,
+    "TRAKT_OAUTH_TOKEN": {
+        "access_token": "YOUR_TRAKT_ACCESS_TOKEN_HERE",
+        "created_at": 0,
+        "expires_in": 86400,
+        "refresh_token": "YOUR_TRAKT_REFRESH_TOKEN_HERE",
+        "scope": "public",
+        "token_type": "bearer"
+    }
+}

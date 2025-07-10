@@ -6,5 +6,10 @@
     "TMDB_API_KEY": "",
     "PLEX_LIBRARIES": [],
     "SYNC_DIRECTION": "plex_to_trakt",
+    "SYNC_INTERVAL_HOURS": 6,
+    "SYNC_WATCH_HISTORY": true,
+    "SYNC_RATINGS": false,
+    "SYNC_WATCHLIST": false,
+    "SYNC_WATCH_PROGRESS": true,
     "DRY_RUN": false
 }
