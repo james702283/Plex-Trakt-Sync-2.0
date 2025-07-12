@@ -97,7 +97,6 @@ class SyncWatchedPlugin(SyncPlugin):
                     with progress_lock:
                         app_state.ITEMS_PROCESSED_COUNT += 1
                         app_state.SYNC_PROGRESS_STATS["current_item_name"] = movie.title
-                        # FIX: The plugin now calculates and sets the library-specific progress.
                         percent = (item_index + 1) / total_items_in_library * 100
                         app_state.SYNC_PROGRESS_STATS["item"]["progress_percent"] = percent
                         app_state.SYNC_PROGRESS_STATS["item"]["name"] = f"Scanning '{section.title}' for watched: {int(percent)}%"
@@ -114,7 +113,6 @@ class SyncWatchedPlugin(SyncPlugin):
                 for item_index, plex_show in enumerate(progress_bar):
                     with progress_lock:
                         app_state.SYNC_PROGRESS_STATS["current_item_name"] = plex_show.title
-                        # FIX: The plugin now calculates and sets the library-specific progress.
                         percent = (item_index + 1) / total_items_in_library * 100
                         app_state.SYNC_PROGRESS_STATS["item"]["progress_percent"] = percent
                         app_state.SYNC_PROGRESS_STATS["item"]["name"] = f"Scanning '{section.title}' for watched: {int(percent)}%"
@@ -122,24 +120,29 @@ class SyncWatchedPlugin(SyncPlugin):
                     if SYNC_CANCEL_REQUESTED: break
                     
                     try:
-                        watched_episodes = plex_show.watched()
-                        if not watched_episodes:
-                            # If no episodes are watched, still count the show as processed for the overall bar
-                            with progress_lock:
-                                app_state.ITEMS_PROCESSED_COUNT += len(plex_show.episodes())
-                            continue
+                        all_episodes = plex_show.episodes()
+                        
+                        if not all_episodes:
+                             with progress_lock: app_state.ITEMS_PROCESSED_COUNT += 1
+                             continue
 
                         show_tvdb_id = next((g.id.split('//')[1] for g in plex_show.guids if 'tvdb' in g.id), None)
-                        if not show_tvdb_id: continue
+                        if not show_tvdb_id: 
+                            with progress_lock: app_state.ITEMS_PROCESSED_COUNT += len(all_episodes)
+                            continue
 
                         show_map = self.trakt_show_cache.get(show_tvdb_id)
                         if not show_map:
                             self.log(f"[CACHE-MISS] TVDB ID {show_tvdb_id} ('{plex_show.title}') not in cache. Fetching from Trakt.")
                             summary_show = self.trakt.find_show_by_tvdb_id(show_tvdb_id)
-                            if not summary_show: continue
+                            if not summary_show: 
+                                with progress_lock: app_state.ITEMS_PROCESSED_COUNT += len(all_episodes)
+                                continue
                             
                             trakt_show = TVShow(slug=summary_show.slug)
-                            if not hasattr(trakt_show, 'seasons'): continue
+                            if not hasattr(trakt_show, 'seasons'): 
+                                with progress_lock: app_state.ITEMS_PROCESSED_COUNT += len(all_episodes)
+                                continue
 
                             new_show_map = {"seasons": {}}
                             for season in trakt_show.seasons:
@@ -152,24 +155,39 @@ class SyncWatchedPlugin(SyncPlugin):
                             self.cache_updated = True
                             show_map = new_show_map
 
-                        for plex_episode in watched_episodes:
+                        for plex_episode in all_episodes:
                             with progress_lock: app_state.ITEMS_PROCESSED_COUNT += 1
                             if SYNC_CANCEL_REQUESTED: break
                             
-                            trakt_id = show_map.get("seasons", {}).get(str(plex_episode.seasonNumber), {}).get(str(plex_episode.index))
+                            if not plex_episode.isPlayed:
+                                continue
+                            
+                            cached_trakt_id = show_map.get("seasons", {}).get(str(plex_episode.seasonNumber), {}).get(str(plex_episode.index))
 
-                            if trakt_id and trakt_id not in trakt_episode_ids:
-                                aware_dt = plex_episode.lastViewedAt.astimezone(local_tz).astimezone(timezone.utc)
-                                watched_at_str = aware_dt.strftime('%Y-%m-%dT%H:%M:%S.000Z')
-                                episodes_to_sync.append({"watched_at": watched_at_str, "ids": {"trakt": trakt_id}})
+                            if cached_trakt_id:
+                                try:
+                                    # FIX: Ensure the cached ID is an integer before checking against the set of watched IDs.
+                                    # This prevents type mismatches (e.g., "12345" vs 12345) from causing incorrect comparisons,
+                                    # which was the root cause of duplicate history entries.
+                                    trakt_id_int = int(cached_trakt_id)
+                                    if trakt_id_int not in trakt_episode_ids:
+                                        aware_dt = plex_episode.lastViewedAt.astimezone(local_tz).astimezone(timezone.utc)
+                                        watched_at_str = aware_dt.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+                                        episodes_to_sync.append({"watched_at": watched_at_str, "ids": {"trakt": trakt_id_int}})
+                                except (ValueError, TypeError):
+                                    self.log(f"[WARN] Could not validate cached Trakt ID '{cached_trakt_id}' for episode '{plex_episode.title}'. Skipping.")
                     
                     except Exception as e:
                         self.log(f"[ERROR] Could not process show '{plex_show.title}'. Skipping it. Reason: {e}")
                         if isinstance(e, RateLimitException):
                             time.sleep(5)
-                        # Still count the episodes for the overall progress even if the show fails
+                        if 'all_episodes' not in locals() or not all_episodes:
+                            try:
+                                all_episodes = plex_show.episodes()
+                            except:
+                                all_episodes = [] 
                         with progress_lock:
-                            app_state.ITEMS_PROCESSED_COUNT += len(plex_show.episodes())
+                            app_state.ITEMS_PROCESSED_COUNT += len(all_episodes)
 
 
         if SYNC_CANCEL_REQUESTED: self.log("[CANCEL] Sync cancelled by user."); return

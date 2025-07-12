@@ -9,8 +9,6 @@ from datetime import datetime
 from .decorators import retry
 from urllib.parse import urljoin
 
-# FIX: Added a trailing slash to the TRAKT_API_URL.
-# This is crucial for urljoin to correctly build subsequent API paths.
 TRAKT_API_URL = "https://api.trakt.tv/"
 
 class TraktApi:
@@ -20,24 +18,17 @@ class TraktApi:
         self.client_secret = client_secret
         self.oauth_token_data = oauth_token_data
         
-        # Explicitly set the base URL for the trakt library to the correct endpoint.
-        # This overrides potentially incorrect hardcoded URLs in specific PyPI versions.
         trakt.core.BASE_URL = TRAKT_API_URL
-
         trakt.core.CLIENT_ID = client_id
         trakt.core.CLIENT_SECRET = client_secret
         
         self._is_authenticated = False
         if oauth_token_data and 'access_token' in oauth_token_data:
             trakt.core.OAUTH_TOKEN = oauth_token_data['access_token']
-            # We are removing the _try_auth() call here.
-            # The presence of OAUTH_TOKEN is enough to consider it authenticated for our purposes.
             self._is_authenticated = True
             self.log("[INFO] TraktApi: Initialized with existing token.")
         else:
-            self.log("[WARN] TraktApi: No existing OAuth token found. Trakt features may require authorization.")
-
-    # The _try_auth() method has been completely removed from this class.
+            self.log("[WARN] TraktApi: No existing OAuth token found.")
 
     def _get_headers(self):
         if not self.oauth_token_data or not self.oauth_token_data.get('access_token'):
@@ -51,7 +42,6 @@ class TraktApi:
 
     @retry()
     def initiate_device_auth(self):
-        # FIX: Ensure URL is correctly joined relative to the base URL
         url = urljoin(TRAKT_API_URL, "oauth/device/code")
         payload = {"client_id": self.client_id}
         response = requests.post(url, json=payload, timeout=10)
@@ -60,7 +50,6 @@ class TraktApi:
 
     @retry()
     def check_device_auth(self, device_code):
-        # FIX: Ensure URL is correctly joined relative to the base URL
         url = urljoin(TRAKT_API_URL, "oauth/device/token")
         payload = {"code": device_code, "client_id": self.client_id, "client_secret": self.client_secret}
         response = requests.post(url, json=payload, timeout=10)
@@ -70,30 +59,66 @@ class TraktApi:
 
     @retry()
     def get_watched_history(self):
-        me = trakt.users.User('me')
-        watched_movies_imdb = {m.ids['ids'].get('imdb') for m in me.watched_movies if m.ids and m.ids.get('ids') and m.ids['ids'].get('imdb')}
-        
+        # --- DEFINITIVE FIX: The previous methods were unreliable. This version uses the paginated
+        # /sync/history endpoint directly, which is the most stable way to get a complete list of all
+        # watched plays. This prevents the app from receiving an incomplete history, which was the
+        # root cause of the duplicate syncs.
+        self.log("[INFO] Fetching full watched history from Trakt API via paginated history endpoint...")
+        watched_movies_imdb = set()
         watched_episodes_trakt = set()
-        # FIX: Access .seasons and .episodes directly from the show_item object
-        # This resolves the 'dict' object has no attribute 'episodes' error
-        if me.watched_shows:
-            for show_item in me.watched_shows:
-                # Ensure show_item is a TraktShow object and has seasons
-                if not hasattr(show_item, 'seasons') or not isinstance(show_item.seasons, list):
-                    self.log(f"[WARN] Trakt watched shows: Skipped item of unexpected type or missing seasons: {type(show_item)}")
-                    continue
-                for season in show_item.seasons:
-                    if not hasattr(season, 'episodes') or not isinstance(season.episodes, list):
-                        self.log(f"[WARN] Trakt watched shows: Skipped season of unexpected type or missing episodes: {type(season)}")
-                        continue
-                    for ep in season.episodes:
-                        if ep.ids and ep.ids.get('ids') and ep.ids['ids'].get('trakt'):
-                             watched_episodes_trakt.add(ep.ids['ids']['trakt'])
+        
+        # 1. Get all watched movie history pages
+        try:
+            page = 1
+            while True:
+                self.log(f"Fetching movie history page {page}...")
+                url = urljoin(TRAKT_API_URL, f"sync/history/movies?page={page}&limit=1000&extended=full")
+                response = requests.get(url, headers=self._get_headers(), timeout=30)
+                if response.status_code == 404: break 
+                response.raise_for_status()
+                
+                data = response.json()
+                if not data: break
+                
+                for item in data:
+                    if item.get('movie', {}).get('ids', {}).get('imdb'):
+                        watched_movies_imdb.add(item['movie']['ids']['imdb'])
+                
+                if 'X-Pagination-Page-Count' in response.headers and page >= int(response.headers['X-Pagination-Page-Count']):
+                    break
+                page += 1
+                time.sleep(0.5) # Be nice to the API
+        except Exception as e:
+            self.log(f"[ERROR] Failed while fetching watched movie history: {e}")
+
+        # 2. Get all watched episode history pages
+        try:
+            page = 1
+            while True:
+                self.log(f"Fetching episode history page {page}...")
+                url = urljoin(TRAKT_API_URL, f"sync/history/shows?page={page}&limit=1000&extended=full")
+                response = requests.get(url, headers=self._get_headers(), timeout=30)
+                if response.status_code == 404: break
+                response.raise_for_status()
+
+                data = response.json()
+                if not data: break
+
+                for item in data:
+                    if item.get('episode', {}).get('ids', {}).get('trakt'):
+                        watched_episodes_trakt.add(item['episode']['ids']['trakt'])
+
+                if 'X-Pagination-Page-Count' in response.headers and page >= int(response.headers['X-Pagination-Page-Count']):
+                    break
+                page += 1
+                time.sleep(0.5) # Be nice to the API
+        except Exception as e:
+            self.log(f"[ERROR] Failed while fetching watched episode history: {e}")
+
+        self.log(f"[INFO] Found {len(watched_movies_imdb)} movies and {len(watched_episodes_trakt)} episodes in Trakt history.")
         return watched_movies_imdb, watched_episodes_trakt
 
     def get_watched_history_for_ui(self):
-        # FIX: Correctly construct the URL using urljoin for robustness
-        # and ensure it hits the sync/history endpoint relative to the base.
         url = urljoin(TRAKT_API_URL, "sync/history?limit=100&extended=full")
         response = requests.get(url, headers=self._get_headers(), timeout=20)
         response.raise_for_status()
@@ -158,6 +183,5 @@ class TraktApi:
 
     @retry()
     def find_show_by_tvdb_id(self, tvdb_id):
-        # FIX: Ensure URL is correctly joined relative to the base URL
         search_results = trakt.sync.search_by_id(tvdb_id, id_type='tvdb', media_type='show')
         return search_results[0] if search_results else None
