@@ -1,54 +1,54 @@
-# plugins/AddCollectionPlugin.py
 from .SyncPlugin import SyncPlugin
+from tqdm import tqdm
+from state import SYNC_CANCEL_REQUESTED
 
 class AddCollectionPlugin(SyncPlugin):
     def run(self):
-        self.log.append("[INFO] [AddCollectionPlugin] Starting sync...")
-
-        library_ids_to_sync = self.run_config.libraries
-        if not library_ids_to_sync:
-            self.log.append("[WARN] [AddCollectionPlugin] No Plex libraries selected to sync. Skipping.")
+        self.log("[INFO] --- Running Add to Trakt Collection Sync ---")
+        
+        library_ids = self.config.get("PLEX_LIBRARIES", [])
+        if not library_ids:
+            self.log("[WARN] No Plex libraries configured. Skipping.")
             return
 
-        collection_payload = {"movies": [], "shows": []}
+        self.log("[INFO] Fetching current Trakt collection...")
+        try:
+            # Trakt returns imdb as a string and tvdb as an integer. We will treat them as strings for consistency.
+            trakt_movies = {item['movie']['ids'].get('imdb') for item in self.trakt.get_collection('movies') if item.get('movie')}
+            trakt_shows = {str(item['show']['ids'].get('tvdb')) for item in self.trakt.get_collection('shows') if item.get('show')}
+        except Exception as e:
+            self.log(f"[ERROR] Could not get Trakt collection: {e}")
+            return
+            
+        plex_items = self.plex.get_all_items_from_libraries(library_ids)
+        movies_to_add, shows_to_add = [], []
 
-        for section_id in library_ids_to_sync:
-            plex_items = self.plex.get_library_items(section_id)
-            for item in plex_items:
-                item_type = item.get('type')
-                title = item.get('title')
-                year = item.get('year')
-                
-                # Find the correct ID for Trakt (IMDb, TMDB, etc.)
-                guid = item.get('guid')
-                imdb_id = None
-                if guid and 'imdb://' in guid:
-                    imdb_id = guid.split('imdb://')[1]
+        for item in tqdm(plex_items, desc="Scanning Plex libraries to add to collection", leave=False, file=self.TqdmToLog()):
+            if SYNC_CANCEL_REQUESTED: break
+            
+            if item.type == 'movie':
+                imdb_id = next((g.id.split('//')[1] for g in item.guids if 'imdb' in g.id), None)
+                if imdb_id and imdb_id not in trakt_movies:
+                    movies_to_add.append({"ids": {"imdb": imdb_id}})
+                    trakt_movies.add(imdb_id) # Avoid duplicates in the same run
+            elif item.type == 'show':
+                tvdb_id = next((g.id.split('//')[1] for g in item.guids if 'tvdb' in g.id), None)
+                # FIX: Consistently compare strings to strings
+                if tvdb_id and tvdb_id not in trakt_shows:
+                    shows_to_add.append({"ids": {"tvdb": tvdb_id}})
+                    trakt_shows.add(tvdb_id) # Avoid duplicates
 
-                if not imdb_id:
-                    self.log.append(f"[WARN] [AddCollectionPlugin] Skipping '{title}' because no IMDb ID was found.")
-                    continue
-
-                formatted_item = {
-                    "title": title,
-                    "year": year,
-                    "ids": {"imdb": imdb_id}
-                }
-
-                if item_type == 'movie':
-                    collection_payload["movies"].append(formatted_item)
-                elif item_type == 'show':
-                    # Syncing shows requires more complex logic to handle seasons/episodes
-                    # For now, we'll just log the show itself.
-                    self.log.append(f"[INFO] [AddCollectionPlugin] Found show '{title}'. Per-episode collection sync not yet implemented.")
-
-        if collection_payload["movies"]:
+        if SYNC_CANCEL_REQUESTED: self.log("[CANCEL] Sync cancelled by user."); return
+        
+        if movies_to_add or shows_to_add:
+            self.log(f"[INFO] Found {len(movies_to_add)} movies and {len(shows_to_add)} shows to add to Trakt collection.")
+            payload = {"movies": movies_to_add, "shows": shows_to_add}
             try:
-                self.log.append(f"[INFO] [AddCollectionPlugin] Adding {len(collection_payload['movies'])} movies to Trakt collection...")
-                response = self.trakt.add_to_collection(collection_payload)
-                added = response.get('added', {})
-                self.log.append(f"[SUCCESS] [AddCollectionPlugin] Trakt response: Added {added.get('movies', 0)} movies.")
+                self.trakt.add_to_collection(payload)
+                self.log("[SUCCESS] Submitted new items to Trakt collection.")
             except Exception as e:
-                self.log.append(f"[ERROR] [AddCollectionPlugin] Failed to add movies to collection: {e}")
+                self.log(f"[ERROR] Failed to add items to Trakt collection: {e}")
+        else:
+            self.log("[INFO] Trakt collection is already up-to-date with your Plex libraries.")
 
-        self.log.append("[INFO] [AddCollectionPlugin] Sync complete.")
+        self.log("[INFO] --- Finished Add to Trakt Collection Sync ---")

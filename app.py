@@ -1,4 +1,3 @@
-# FORCE UPDATE - ensure this version overwrites remote
 import sys
 import os
 import subprocess

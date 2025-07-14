@@ -139,7 +139,7 @@ class SyncWatchedPlugin(SyncPlugin):
                                 with progress_lock: app_state.ITEMS_PROCESSED_COUNT += len(all_episodes)
                                 continue
                             
-                            trakt_show = TVShow(slug=summary_show.slug)
+                            trakt_show = TVShow(slug=summary_show['ids']['slug'])
                             if not hasattr(trakt_show, 'seasons'): 
                                 with progress_lock: app_state.ITEMS_PROCESSED_COUNT += len(all_episodes)
                                 continue
@@ -166,9 +166,6 @@ class SyncWatchedPlugin(SyncPlugin):
 
                             if cached_trakt_id:
                                 try:
-                                    # FIX: Ensure the cached ID is an integer before checking against the set of watched IDs.
-                                    # This prevents type mismatches (e.g., "12345" vs 12345) from causing incorrect comparisons,
-                                    # which was the root cause of duplicate history entries.
                                     trakt_id_int = int(cached_trakt_id)
                                     if trakt_id_int not in trakt_episode_ids:
                                         aware_dt = plex_episode.lastViewedAt.astimezone(local_tz).astimezone(timezone.utc)
@@ -191,11 +188,36 @@ class SyncWatchedPlugin(SyncPlugin):
 
 
         if SYNC_CANCEL_REQUESTED: self.log("[CANCEL] Sync cancelled by user."); return
-        if movies_to_sync or episodes_to_sync:
-            self.log(f"[PLEX->TRAKT] Found {len(movies_to_sync)} movies and {len(episodes_to_sync)} episodes to sync to Trakt.")
-            self._submit_to_trakt_history(movies_to_sync, "movies")
-            self._submit_to_trakt_history(episodes_to_sync, "episodes")
-        else:
+        
+        # --- NEW: The "Smart" Safety Fuse ---
+        # We define a "new account" as one with very few items in its history.
+        # The safety threshold will only apply to established accounts.
+        safety_threshold = self.config.get("SYNC_SAFETY_THRESHOLD", 500)
+        grace_limit = 50 # Consider an account with fewer than this many plays as "new"
+        is_initial_sync = (len(trakt_movie_ids) + len(trakt_episode_ids)) < grace_limit
+
+        if is_initial_sync:
+            self.log("[INFO] New or empty Trakt account detected. Safety threshold will be bypassed for this initial sync.")
+
+        # Handle movies
+        if movies_to_sync:
+            if len(movies_to_sync) > safety_threshold and not is_initial_sync:
+                self.log(f"[CRITICAL] SAFETY FUSE BLOWN: Attempted to sync {len(movies_to_sync)} movies, which is over the threshold of {safety_threshold}.")
+                self.log("[CRITICAL] This is usually a sign of a bug or bad data. Aborting movie sync to prevent data corruption.")
+            else:
+                self.log(f"[PLEX->TRAKT] Found {len(movies_to_sync)} movies to sync to Trakt.")
+                self._submit_to_trakt_history(movies_to_sync, "movies")
+
+        # Handle episodes
+        if episodes_to_sync:
+            if len(episodes_to_sync) > safety_threshold and not is_initial_sync:
+                self.log(f"[CRITICAL] SAFETY FUSE BLOWN: Attempted to sync {len(episodes_to_sync)} episodes, which is over the threshold of {safety_threshold}.")
+                self.log("[CRITICAL] This is usually a sign of a bug or bad data. Aborting episode sync to prevent data corruption.")
+            else:
+                self.log(f"[PLEX->TRAKT] Found {len(episodes_to_sync)} episodes to sync to Trakt.")
+                self._submit_to_trakt_history(episodes_to_sync, "episodes")
+
+        if not movies_to_sync and not episodes_to_sync:
             self.log("[PLEX->TRAKT] No new items to sync.")
 
     def _sync_trakt_to_plex(self):
@@ -210,6 +232,7 @@ class SyncWatchedPlugin(SyncPlugin):
         library_ids = self.config.get("PLEX_LIBRARIES", [])
         plex_items = self.plex.get_all_items_from_libraries(library_ids)
         
+        # This lookup ONLY includes items not yet played on Plex.
         plex_lookup = {g.id: item for item in plex_items if not item.isPlayed for g in item.guids}
         
         items_to_mark = []
@@ -231,6 +254,7 @@ class SyncWatchedPlugin(SyncPlugin):
             
             if plex_item:
                 items_to_mark.append(plex_item)
+                # Optimization: remove from lookup so we don't check it again for other IDs
                 if 'imdb' in ids and guid_map['imdb'] in plex_lookup:
                     del plex_lookup[guid_map['imdb']]
                 

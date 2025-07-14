@@ -138,12 +138,29 @@
                             </select>
                         </div>
                     </fieldset>
-                    <fieldset><legend class="text-lg font-medium text-white mb-2">Sync Features</legend>
+                    <fieldset><legend class="text-lg font-medium text-white mb-2">Core Sync Features</legend>
                         <div class="space-y-2">
                             <label class="flex items-center"><input type="checkbox" id="SYNC_WATCH_HISTORY" name="SYNC_WATCH_HISTORY" class="form-checkbox"><span class="ml-3 text-gray-300">Sync Watched History</span></label>
                             <label class="flex items-center"><input type="checkbox" id="SYNC_RATINGS" name="SYNC_RATINGS" class="form-checkbox"><span class="ml-3 text-gray-300">Sync Ratings</span></label>
-                            <label class="flex items-center"><input type="checkbox" id="SYNC_WATCHLIST" name="SYNC_WATCHLIST" class="form-checkbox"><span id="watchlist-label-text" class="ml-3 text-gray-300"></span></label>
-                            <label class="flex items-center"><input type="checkbox" id="SYNC_WATCH_PROGRESS" name="SYNC_WATCH_PROGRESS" class="form-checkbox"><span class="ml-3 text-gray-300">Sync Watch Progress (Resume Points)</span></label>
+                            <label class="flex items-center"><input type="checkbox" id="SYNC_WATCH_PROGRESS" name="SYNC_WATCH_PROGRESS" class="form-checkbox"><span class="ml-3 text-gray-300">Sync Watch Progress (Trakt to Plex only)</span></p></label>
+                        </div>
+                    </fieldset>
+                    
+                    <fieldset><legend class="text-lg font-medium text-white mb-2">Collection & List Management</legend>
+                        <div class="space-y-3">
+                             <label class="flex items-center"><input type="checkbox" id="SYNC_WATCHLIST" name="SYNC_WATCHLIST" class="form-checkbox"><span id="watchlist-label-text" class="ml-3 text-gray-300">Sync Watchlist</span></label>
+                             <p class="text-xs text-gray-500 -mt-2 ml-7">Syncs the Trakt Watchlist with a Plex Collection named "Trakt Watchlist".</p>
+                           
+                            <label class="flex items-center"><input type="checkbox" id="SYNC_TRAKT_COLLECTION" name="SYNC_TRAKT_COLLECTION" class="form-checkbox"><span class="ml-3 text-gray-300">Sync Plex Library to Trakt Collection</span></label>
+                            <p class="text-xs text-gray-500 -mt-2 ml-7">One-way sync that adds all items from your selected Plex libraries to your Trakt Collection.</p>
+                            
+                            <label class="flex items-center"><input type="checkbox" id="SYNC_CUSTOM_LISTS" name="SYNC_CUSTOM_LISTS" class="form-checkbox"><span class="ml-3 text-gray-300">Sync Custom Trakt Lists to Plex</span></label>
+                            <p class="text-xs text-gray-500 -mt-2 ml-7">One-way sync that creates Plex Collections from your custom Trakt lists.</p>
+
+                            <div class="!mt-4 pt-4 border-t border-red-500/30">
+                               <label class="flex items-center"><input type="checkbox" id="CLEAR_TRAKT_COLLECTION" name="CLEAR_TRAKT_COLLECTION" class="form-checkbox !text-red-600"><span class="ml-3 font-medium text-amber-400">Clear Entire Trakt Collection Before Sync</span></label>
+                               <p class="text-xs text-red-400 ml-7"><strong>DANGER:</strong> If checked, this will remove <strong>ALL</strong> movies and shows from your Trakt Collection before any other sync runs. Use this to start fresh.</p>
+                            </div>
                         </div>
                     </fieldset>
                     <fieldset><legend class="text-lg font-medium text-white mb-2">Plex Libraries</legend><div id="plex-library-list" class="max-h-40 overflow-y-auto space-y-2 p-3 bg-gray-900 rounded-lg border border-gray-700"><p class="text-gray-500">Authorize Plex and save to load libraries.</p></div></fieldset>
@@ -220,6 +237,11 @@ document.addEventListener('DOMContentLoaded', () => {
         getSyncProgress: () => fetch('/api/sync-progress').then(res => res.json()),
     };
     
+    const featureFlags = [
+        'SYNC_WATCH_HISTORY', 'SYNC_RATINGS', 'SYNC_WATCHLIST', 'SYNC_WATCH_PROGRESS',
+        'SYNC_TRAKT_COLLECTION', 'SYNC_CUSTOM_LISTS', 'CLEAR_TRAKT_COLLECTION'
+    ];
+
     const initializeSpeedChart = () => {
         if (speedChart) speedChart.destroy();
         speedChart = new Chart(dom.speedChartCanvas, {
@@ -319,10 +341,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
             dom.syncIntervalInput.value = config.SYNC_INTERVAL_HOURS !== undefined ? config.SYNC_INTERVAL_HOURS : 0;
-            ['SYNC_WATCH_HISTORY', 'SYNC_RATINGS', 'SYNC_WATCHLIST', 'SYNC_WATCH_PROGRESS'].forEach(key => {
+            
+            featureFlags.forEach(key => {
                 const el = document.getElementById(key);
                 if (el) el.checked = !!config[key];
             });
+
             updateWatchlistLabel();
             if(config.PLEX_TOKEN && config.PLEX_URL) fetchAndRenderLibraries(config.PLEX_LIBRARIES);
         } catch(e) { console.error("Failed to populate form:", e); }
@@ -371,6 +395,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const renderSyncHistoryItem = entry => `<div class="bg-gray-800/50 p-4 rounded-lg mb-3"><div class="flex justify-between items-center"><div><p class="font-semibold text-white">${new Date(entry.start_time).toLocaleString()}</p><p class="text-sm text-gray-400">Duration: ${Math.floor(entry.duration_seconds / 60)}m ${entry.duration_seconds % 60}s • Items Scanned: ${entry.items_added}</p></div><p class="font-bold ${entry.status === 'Completed' ? 'text-green-400' : (entry.status === 'Cancelled' ? 'text-amber-400' : 'text-red-400')}">${entry.status}</p></div></div>`;
 
     dom.manualSyncBtn.addEventListener('click', async () => {
+        const clearCheckbox = document.getElementById('CLEAR_TRAKT_COLLECTION');
+        if (clearCheckbox && clearCheckbox.checked) {
+            if (!confirm("DANGER ZONE:\n\nYou have checked 'Clear Entire Trakt Collection Before Sync'. This will permanently delete ALL movies and shows from your Trakt Collection.\n\nAre you absolutely sure you want to proceed?")) {
+                return;
+            }
+        }
+
         handleSyncState(true);
         dom.rawLogContainer.innerHTML = '<p class="text-gray-400 p-4 text-center">Starting sync process...</p>';
         try {
@@ -396,7 +427,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if(el) data[key] = el.type === 'number' ? (parseInt(value, 10) || 0) : value;
         }
         data.PLEX_LIBRARIES = Array.from(document.querySelectorAll('input[name="PLEX_LIBRARIES"]:checked')).map(cb => cb.value);
-        ['SYNC_WATCH_HISTORY', 'SYNC_RATINGS', 'SYNC_WATCHLIST', 'SYNC_WATCH_PROGRESS'].forEach(key => data[key] = document.getElementById(key).checked);
+        
+        featureFlags.forEach(key => data[key] = document.getElementById(key).checked);
+
         api.saveConfig(data).then(() => { alert('Settings saved!'); dom.settingsModal.classList.add('hidden'); populateForm(); refreshStatus(); });
     });
     dom.tabsNav.addEventListener('click', (e) => {

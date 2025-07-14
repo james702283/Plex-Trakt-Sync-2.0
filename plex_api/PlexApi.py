@@ -86,7 +86,22 @@ class PlexApi:
                 self.log(f"[WARN] Could not fetch items from library {key}: {e}")
         return all_items
 
-    ## FIX: This function is now 100% accurate. It counts every movie and episode.
+    def get_plex_watchlist(self):
+        """
+        Fetches the user's universal watchlist from their Plex account.
+        This is the correct way to get the built-in watchlist.
+        """
+        try:
+            # Note: myPlexAccount() requires the server to be connected.
+            if not self.server:
+                self.log("[WARN] Plex server not connected. Cannot fetch universal watchlist.")
+                return []
+            self.log("[INFO] Fetching user's built-in Plex Watchlist...")
+            return self.server.myPlexAccount().watchlist()
+        except Exception as e:
+            self.log(f"[ERROR] Could not fetch your Plex Universal Watchlist: {e}")
+            return []
+
     def get_total_item_count(self, library_keys):
         if not self.is_configured:
             return 0
@@ -98,7 +113,6 @@ class PlexApi:
                 if section.type == 'movie':
                     total_count += section.totalSize
                 elif section.type == 'show':
-                    # For shows, we must count the episodes to be accurate
                     self.log(f"Counting episodes in '{section.title}'...")
                     total_count += len(section.search(libtype='episode'))
             except Exception as e:
