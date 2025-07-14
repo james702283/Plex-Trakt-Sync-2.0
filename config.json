@@ -1,25 +1,30 @@
 {
-    "PLEX_URL": "YOUR_PLEX_URL_HERE",
-    "PLEX_TOKEN": "YOUR_PLEX_TOKEN_HERE",
-    "TRAKT_CLIENT_ID": "YOUR_TRAKT_CLIENT_ID_HERE",
-    "TRAKT_CLIENT_SECRET": "YOUR_TRAKT_CLIENT_SECRET_HERE",
-    "TMDB_API_KEY": "YOUR_TMDB_API_KEY_HERE",
+    "PLEX_URL": "http://192.168.1.153:32400/",
+    "PLEX_TOKEN": "",
+    "TRAKT_CLIENT_ID": "",
+    "TRAKT_CLIENT_SECRET": "",
+    "TMDB_API_KEY": "",
     "PLEX_LIBRARIES": [
-        "YOUR_PLEX_LIBRARY_IDS_HERE"
+        "6",
+        "1",
+        "4"
     ],
     "SYNC_DIRECTION": "plex_to_trakt",
-    "SYNC_INTERVAL_HOURS": 6,
+    "SYNC_INTERVAL_HOURS": 0,
     "SYNC_WATCH_HISTORY": true,
-    "SYNC_RATINGS": false,
-    "SYNC_WATCHLIST": false,
-    "SYNC_WATCH_PROGRESS": true,
+    "SYNC_RATINGS": true,
+    "SYNC_WATCHLIST": true,
+    "SYNC_WATCH_PROGRESS": false,
     "DRY_RUN": false,
     "TRAKT_OAUTH_TOKEN": {
-        "access_token": "YOUR_TRAKT_ACCESS_TOKEN_HERE",
-        "created_at": 0,
+        "access_token": "",
+        "created_at": 1752494291,
         "expires_in": 86400,
-        "refresh_token": "YOUR_TRAKT_REFRESH_TOKEN_HERE",
+        "refresh_token": "",
         "scope": "public",
         "token_type": "bearer"
-    }
+    },
+    "SYNC_TRAKT_COLLECTION": false,
+    "SYNC_CUSTOM_LISTS": false,
+    "CLEAR_TRAKT_COLLECTION": false
 }
