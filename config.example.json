@@ -1,0 +1,72 @@
+{
+    // -------------------------------------------------------------------------
+    // --- API Credentials & Core Setup ---
+    // These values are typically filled in automatically via the web UI.
+    // -------------------------------------------------------------------------
+    "PLEX_URL": "",
+    "PLEX_TOKEN": "",
+    "TRAKT_CLIENT_ID": "",
+    "TRAKT_CLIENT_SECRET": "",
+    "TMDB_API_KEY": "",
+
+    // A list of the Plex library IDs (as strings) to be included in the sync.
+    // Example: ["1", "5", "12"]
+    "PLEX_LIBRARIES": [],
+
+    // -------------------------------------------------------------------------
+    // --- Sync Behavior & Scheduling ---
+    // -------------------------------------------------------------------------
+    
+    // Determines the primary direction of the sync.
+    // Options: "plex_to_trakt", "trakt_to_plex", "bidirectional"
+    "SYNC_DIRECTION": "plex_to_trakt",
+
+    // The interval, in hours, for automatic background syncs.
+    // Set to 0 to disable automatic syncing.
+    "SYNC_INTERVAL_HOURS": 0,
+
+    // The safety limit for history sync. If the number of items to be added
+    // in a single run exceeds this value, the sync will be aborted to prevent
+    // accidental data corruption. This is ignored for initial syncs to new accounts.
+    "SYNC_SAFETY_THRESHOLD": 500,
+
+    // -------------------------------------------------------------------------
+    // --- Core Feature Toggles ---
+    // These can all be controlled from the Settings UI.
+    // -------------------------------------------------------------------------
+
+    // Syncs watch history between Plex and Trakt.
+    "SYNC_WATCH_HISTORY": true,
+
+    // Syncs ratings (0-10) between Plex and Trakt.
+    "SYNC_RATINGS": false,
+
+    // Syncs in-progress viewing data (resume points) from Trakt to Plex.
+    "SYNC_WATCH_PROGRESS": true,
+
+    // Syncs the Plex universal watchlist and the Trakt watchlist.
+    "SYNC_WATCHLIST": false,
+
+    // -------------------------------------------------------------------------
+    // --- Collection & List Management Toggles ---
+    // -------------------------------------------------------------------------
+
+    // Syncs all content from your selected Plex Libraries to your Trakt Collection.
+    // This is a one-way sync from Plex to Trakt.
+    "SYNC_TRAKT_COLLECTION": false,
+
+    // Creates Plex collections based on your custom lists from Trakt.
+    // This is a one-way sync from Trakt to Plex.
+    "SYNC_CUSTOM_LISTS": false,
+
+
+    // -------------------------------------------------------------------------
+    // --- DANGER ZONE ---
+    // -------------------------------------------------------------------------
+
+    // !! WARNING !! If set to true, this will DELETE EVERYTHING from your
+    // Trakt Collection before any other sync operation runs.
+    // This should only be used if you want to completely rebuild your
+    // Trakt Collection based on your Plex libraries.
+    "CLEAR_TRAKT_COLLECTION": false
+}

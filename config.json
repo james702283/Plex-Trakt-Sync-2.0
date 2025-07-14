@@ -4,26 +4,14 @@
     "TRAKT_CLIENT_ID": "",
     "TRAKT_CLIENT_SECRET": "",
     "TMDB_API_KEY": "",
-    "PLEX_LIBRARIES": [
-        "6",
-        "1",
-        "4"
-    ],
+    "PLEX_LIBRARIES": [],
     "SYNC_DIRECTION": "plex_to_trakt",
     "SYNC_INTERVAL_HOURS": 0,
+    "SYNC_SAFETY_THRESHOLD": 500,
     "SYNC_WATCH_HISTORY": true,
-    "SYNC_RATINGS": true,
-    "SYNC_WATCHLIST": true,
-    "SYNC_WATCH_PROGRESS": false,
-    "DRY_RUN": false,
-    "TRAKT_OAUTH_TOKEN": {
-        "access_token": "",
-        "created_at": 1752494291,
-        "expires_in": 86400,
-        "refresh_token": "",
-        "scope": "public",
-        "token_type": "bearer"
-    },
+    "SYNC_RATINGS": false,
+    "SYNC_WATCH_PROGRESS": true,
+    "SYNC_WATCHLIST": false,
     "SYNC_TRAKT_COLLECTION": false,
     "SYNC_CUSTOM_LISTS": false,
     "CLEAR_TRAKT_COLLECTION": false
